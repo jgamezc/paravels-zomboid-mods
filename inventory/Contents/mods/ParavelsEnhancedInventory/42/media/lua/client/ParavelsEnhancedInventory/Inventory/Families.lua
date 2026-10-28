@@ -11,8 +11,8 @@
     ammo, a magazine among books). It is decided by rules that look only at
     the item, never at its family, and is never given to whole families.
 
-    Families.classify(item) answers both; npm run check fails if the game
-    has a display category no family takes. Families.tintOf(family) is the
+    Families.classify(item) answers both; every display category of the
+    game must be taken by a family. Families.tintOf(family) is the
     colour to draw a family's items with, read from the theme when drawn.
     What state an item is in (food gone rotten, a bottle holding a drink)
     can change its family; its colour always follows from the family, and

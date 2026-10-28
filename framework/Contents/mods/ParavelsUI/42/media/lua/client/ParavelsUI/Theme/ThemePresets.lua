@@ -5,8 +5,7 @@
     preset gives every token of Theme.TOKENS (Theme/Theme.lua) its own
     value, and nothing else: no preset is the reference for the others and
     none inherits from another, so a new token is decided in each of them.
-    A choice token is set by name. `npm run check` fails when one is
-    missing, unknown or not one of its choices.
+    A choice token is set by name and must be one of its choices.
 
     ThemePresets.ORDER is the order the player sees them in. The player's
     choice is saved as a position in it, so a new theme goes last and none

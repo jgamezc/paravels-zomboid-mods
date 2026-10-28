@@ -35,4 +35,4 @@ description=
 description=[h2]First release[/h2]
 description=This is the first version, so it can have bugs. My plan is to bring the same look to more of the game's interfaces over time, without dates or promises. If something breaks, looks wrong or could be better, please tell me in the comments: every report and suggestion helps.
 tags=Build 42;Interface;QoL;WIP
-visibility=private
+visibility=public

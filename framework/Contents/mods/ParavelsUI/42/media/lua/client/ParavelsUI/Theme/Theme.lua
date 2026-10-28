@@ -11,7 +11,7 @@
     a new generic token, not a constant.
 
     Theme.TOKENS lists every token, and each preset gives every one of them
-    its value (npm run check fails otherwise). The preset in use
+    its value. The preset in use
     (Theme.apply) is worked out into Theme.current, by token id, as the
     accessors below hand it out: colours are { r, g, b, a } tables,
     percentages are 0..1, pixels and choices stay as the preset has them.
