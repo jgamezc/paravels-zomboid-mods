@@ -1,0 +1,239 @@
+--[[
+    Paravel's Enhanced Inventory - proximity tab
+
+    The loot window gets one more tab, the first one (leftmost): every item
+    of every container around the player (the floor, furniture, bodies,
+    bags on the floor) in a single list. It is open by default; picking
+    another tab keeps that one open until its container is out of reach
+    (Window/OpenTab.lua keeps which is open).
+
+    The tab is a vanilla container button for the floor's ItemContainer,
+    like the equipped tab shares the player's inventory, so the lists that
+    gather the containers around the player (crafting, "transfer same type"
+    to every container...) never count an item twice. Only while the pane
+    lists the tab does it see, in place of the floor, a container of its own
+    holding all the items: vanilla builds the rows, the weight and the loot
+    controls from it. Its items stay in their real containers (they are put
+    in its list, not moved), so transfers, drags, double clicks and context
+    menus take each item from where it is, as vanilla's code does. Like the
+    floor, it is typed "floor": items given to it are dropped.
+
+    Vanilla's transfers open the container each item comes from, which
+    shows what is being taken; once the player is done, a window that was
+    on this tab goes back to it.
+]]
+
+require "ParavelsEnhancedInventory/Core/PEI"
+require "ISUI/ISInventoryPage"
+require "ISUI/ISInventoryPane"
+require "ISUI/LootWindow/ISLootWindowContainerControls"
+require "TimedActions/ISTimedActionQueue"
+require "TimedActions/ISInventoryTransferAction"
+require "ParavelsEnhancedInventory/Inventory/Window/OpenTab"
+
+local OpenTab = PEI.OpenTab
+
+local ProximityTab = PEI.ProximityTab or {}
+PEI.ProximityTab = ProximityTab
+
+-- The game's crate (its boxes' container icon), drawn like the other tabs'
+-- icons: a container of containers.
+ProximityTab.TEXTURE = "media/ui/Container_Crate.png"
+
+-- The container each player's tab lists, kept across refreshes (and reloads).
+ProximityTab.containers = ProximityTab.containers or {}
+
+-- Pages a transfer took off the tab, to go back to it when it is done.
+ProximityTab.returning = ProximityTab.returning or {}
+
+local function nearbyContainer(playerNum)
+    local container = ProximityTab.containers[playerNum]
+    if not container then
+        container = ItemContainer.new("floor", nil, nil)
+        container:setExplored(true)
+        ProximityTab.containers[playerNum] = container
+    end
+    return container
+end
+
+local function isProximityTab(page, button)
+    return OpenTab.kindOf(page, button) == OpenTab.PROXIMITY
+end
+
+-- Whether the page shows the tab: it has one, it was not left for another
+-- tab, and the pane lists the floor, the container the tab shares.
+function ProximityTab.isShown(page)
+    return OpenTab.shown(page) == OpenTab.PROXIMITY
+end
+
+local function isListing(pane)
+    local page = pane.parent
+    return page ~= nil and not page.onCharacter and ProximityTab.isShown(page)
+end
+
+-- Runs fn while the pane lists the tab's own container instead of the floor.
+local function withNearbyItems(pane, fn, ...)
+    return PUI.withFields(pane, { inventory = nearbyContainer(pane.player) }, fn, pane, ...)
+end
+
+-- ------------------------------------------------------------------ --
+-- The tab
+-- ------------------------------------------------------------------ --
+
+local function isLocked(container, playerObj)
+    local object = container:getParent()
+    return instanceof(object, "IsoThumpable") and object:isLockedToCharacter(playerObj)
+end
+
+local function listsContainer(page, inventory)
+    for _, button in ipairs(page.backpacks) do
+        if button.inventory == inventory and not isProximityTab(page, button) then return true end
+    end
+    return false
+end
+
+-- Gathers the items of the containers the other tabs show.
+local function fillNearbyContainer(page)
+    local playerObj = getSpecificPlayer(page.player)
+    local items = nearbyContainer(page.player):getItems()
+    items:clear()
+    for _, button in ipairs(page.backpacks) do
+        local container = button.inventory
+        if not isProximityTab(page, button) and not isLocked(container, playerObj) then
+            items:addAll(container:getItems())
+        end
+    end
+end
+
+-- Added first, so it is the leftmost tab. Vanilla reuses its buttons from a
+-- pool, in order, so the tab gets the same button again on every refresh.
+-- Inside a vehicle the loot window lists the vehicle's parts and no floor,
+-- and there is no tab.
+PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab", function(page, state)
+    if page.onCharacter then return end
+    if state == "begin" then
+        OpenTab.removeButton(page, OpenTab.PROXIMITY)
+        local playerObj = getSpecificPlayer(page.player)
+        if not playerObj or playerObj:getVehicle() then return end
+        local floor = ISInventoryPage.GetFloorContainer(page.player)
+        local button = page:addContainerButton(floor, getTexture(ProximityTab.TEXTURE), getText("IGUI_PEI_ProximityTab"), nil)
+        button.capacity = floor:getMaxWeight()
+        OpenTab.addButton(page, OpenTab.PROXIMITY, button)
+        return
+    end
+    if state ~= "buttonsAdded" or not OpenTab.buttonOf(page, OpenTab.PROXIMITY) then return end
+    fillNearbyContainer(page)
+    -- Vanilla next keeps the pane on the container it lists, if still there.
+    -- While the tab is open, that is the floor, even when the player turns
+    -- to face another container or a transfer asks for the one it used.
+    local pane = page.inventoryPane
+    local floor = ISInventoryPage.GetFloorContainer(page.player)
+    if OpenTab.chosen(page) == OpenTab.PROXIMITY then
+        pane.inventory = floor
+        page.forceSelectedContainer = nil
+    elseif not pane.inventory or not listsContainer(page, pane.inventory) then
+        -- The tab picked instead is gone: back to this one.
+        OpenTab.choose(page, OpenTab.PROXIMITY)
+        pane.inventory = floor
+    end
+end)
+
+-- ------------------------------------------------------------------ --
+-- Back to the tab after a transfer
+-- ------------------------------------------------------------------ --
+
+local SELECTING_FOR_TRANSFER = { pei_selectingForTransfer = true }
+
+-- Only a "take all" / "transfer all" follows the items from container to
+-- container; a single item, or a hand-picked few, leave the tab as it is.
+-- The actions are marked when created, as they run later, one at a time.
+ProximityTab.creatingBatch = false
+
+PUI.override(ISInventoryTransferAction, "new", function(vanilla, ...)
+    local action = vanilla(...)
+    action.pei_batch = ProximityTab.creatingBatch or nil
+    return action
+end)
+
+local function asBatch(vanilla, pane)
+    return PUI.withFields(ProximityTab, { creatingBatch = true }, vanilla, pane)
+end
+
+PUI.override(ISInventoryPane, "transferAll", asBatch)
+
+-- Runs the action's start, update and perform knowing whether it is part of a batch.
+local function overrideStep(name)
+    PUI.override(ISInventoryTransferAction, name, function(vanilla, action)
+        local page = getPlayerLoot(action.character:getPlayerNum())
+        return PUI.withFields(page, { pei_singleTransfer = not action.pei_batch }, vanilla, action)
+    end)
+end
+overrideStep("start")
+overrideStep("update")
+overrideStep("perform")
+
+-- Transfers open the container they take from (or put into) through this.
+-- A tab picked by hand meanwhile cancels the return (Window/TabSelection.lua).
+PUI.override(ISInventoryPage, "selectButtonForContainer", function(vanilla, page, container)
+    local wasOnTab = ProximityTab.isShown(page) or ProximityTab.returning[page] ~= nil
+    if wasOnTab and page.pei_singleTransfer then return end
+    PUI.withFields(page, SELECTING_FOR_TRANSFER, vanilla, page, container)
+    if wasOnTab and OpenTab.buttonOf(page, OpenTab.PROXIMITY) and not ProximityTab.isShown(page) then
+        ProximityTab.returning[page] = true
+    end
+end)
+
+-- A tab picked by hand, or a container the game chose, stays open after the
+-- transfers: no return. What a transfer opens itself does not count.
+function ProximityTab.cancelReturn(page)
+    if not page.pei_selectingForTransfer then ProximityTab.returning[page] = nil end
+end
+
+PUI.listen(Events.OnTick, "PEI.ProximityTab.returnAfterTransfers", function()
+    if PUI.isEmpty(ProximityTab.returning) then return end
+    for page in pairs(ProximityTab.returning) do
+        local playerObj = getSpecificPlayer(page.player)
+        if not playerObj or not ISTimedActionQueue.isPlayerDoingAction(playerObj) then
+            ProximityTab.returning[page] = nil
+            local button = OpenTab.buttonOf(page, OpenTab.PROXIMITY)
+            if playerObj and button and not ProximityTab.isShown(page) then page:selectContainer(button) end
+        end
+    end
+end)
+
+-- ------------------------------------------------------------------ --
+-- What the pane sees while the tab is open
+-- ------------------------------------------------------------------ --
+
+-- The rows. Vanilla clears the dirty mark of the container it lists; the
+-- floor's is cleared too, or the pane would rebuild on every frame.
+function ProximityTab.refreshContainer(vanilla, pane)
+    if not isListing(pane) then return vanilla(pane) end
+    local floor = pane.inventory
+    withNearbyItems(pane, vanilla)
+    floor:setDrawDirty(false)
+end
+
+PUI.override(ISInventoryPane, "lootAll", function(vanilla, pane)
+    if not isListing(pane) then return asBatch(vanilla, pane) end
+    return withNearbyItems(pane, asBatch, vanilla)
+end)
+
+-- The weight shown, read by the page from the container the pane lists.
+PUI.override(ISInventoryPage, "loadWeight", function(vanilla, inventory)
+    for playerNum, container in pairs(ProximityTab.containers) do
+        if inventory == ISInventoryPage.GetFloorContainer(playerNum) then
+            local loot = getPlayerLoot(playerNum)
+            if loot and ProximityTab.isShown(loot) then return vanilla(container) end
+        end
+    end
+    return vanilla(inventory)
+end)
+
+-- The loot controls (and the window's transfer buttons, which follow them)
+-- act on all the items: having no object, the container gets the floor's.
+PUI.override(ISLootWindowContainerControls, "getDisplayedContainer", function(vanilla, controls)
+    local page = controls.lootWindow
+    if page and ProximityTab.isShown(page) then return nearbyContainer(page.player) end
+    return vanilla(controls)
+end)

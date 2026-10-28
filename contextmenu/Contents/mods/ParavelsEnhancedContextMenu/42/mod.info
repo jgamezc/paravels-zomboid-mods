@@ -1,0 +1,8 @@
+name=Paravel's Enhanced Context Menu
+id=ParavelsEnhancedContextMenu
+author=Paravel
+modversion=1.0.0
+description=Gives the game's right-click menus the look of Paravel's UI.
+category=qol
+versionMin=42.21.0
+require=\ParavelsUI
