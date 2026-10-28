@@ -108,9 +108,19 @@ end
 local function fitUncached(text, room, font)
     if Text.width(text, font) <= room then return text end
     local length = longestFittingStart(text, room - Text.width(Text.ELLIPSIS, font), font)
-    while length > 0 and string.sub(text, length, length) == " " do length = length - 1 end
-    if length == 0 then return "" end
-    return string.sub(text, 1, length) .. Text.ELLIPSIS
+    local textManager = getTextManager()
+    while length > 0 do
+        while length > 0 and string.sub(text, length, length) == " " do length = length - 1 end
+        local cut = string.sub(text, 1, length) .. Text.ELLIPSIS
+        -- The start and the dots were measured apart, and kerning between
+        -- them can make the whole a pixel wider than the room: drop letters
+        -- until it fits, so a cut text is never wider than asked.
+        if length == 0 or textManager:MeasureStringX(font, cut) <= room then
+            return length > 0 and cut or ""
+        end
+        length = length - 1
+    end
+    return ""
 end
 
 -- A text too long for `room` pixels ends in "...", with no space before the dots.

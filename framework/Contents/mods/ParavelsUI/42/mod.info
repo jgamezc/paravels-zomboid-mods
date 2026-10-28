@@ -1,7 +1,7 @@
 name=Paravel's UI
 id=ParavelsUI
 author=Paravel
-modversion=1.4.0
+modversion=1.4.1
 description=Themed interface framework for Paravel's mods: one theme the player picks, applied to every window those mods restyle. Does nothing on its own.
 category=features
 versionMin=42.21.0
