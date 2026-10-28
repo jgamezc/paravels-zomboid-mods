@@ -3,15 +3,17 @@
 
     Says whether an item is better than what the player wears, holds or has
     attached in the same place, for the mark the grid and the list draw on it
-    (ItemIcon.drawUpgradeMark). "Better" is strict and cautious: at least as
-    good in both measures and better in one, so a mark never hides a trade-off
-    (a warmer coat that protects less is not better).
+    (ItemIcon.drawUpgradeMark). "Better" means worth strictly more by the one
+    measure of its kind:
 
-    - Clothing: protection (bite, scratch and bullet defence) and warmth
-      (insulation, wind and water resistance), against everything the player
-      wears where it goes or in a place that excludes it, as the game's own
-      clothing tooltip counts it. An empty place is worth nothing, so any
-      garment that protects or warms at all is better than none.
+    - Clothing: protection only (bite, scratch and bullet defence), against
+      everything the player wears where it goes or in a place that excludes
+      it, as the game's own clothing tooltip counts it. Warmth (insulation,
+      wind and water resistance) is ignored: only protective clothing gets
+      the mark, and weighing warmth too hid it from football pants (more
+      protection) when long padded trousers (warmer) were worn. An empty
+      place is worth nothing, so any garment that protects at all is better
+      than none.
     - Wearable bags: the capacity they give, against the bag worn in that place.
     - Weapons: average damage, against the best weapon of the same kind the
       player has in hand or attached (hotbar, belt, back...): melee, or
@@ -24,8 +26,10 @@
       that is empty, or where hangs a weapon of the same class that they beat,
       slot by slot. The slots are the ones the player has now, and the game
       says what fits each (ISHotbar:canBeAttached).
-    Worn, held, attached and broken items never get the mark, and broken ones
-    are worth nothing as the reference.
+    Only items that earn the top indicator (Families.earnsTopIndicator) get
+    the mark: plain clothes and tools are not worth flagging. Worn, held,
+    attached and broken items never get it, and broken ones are worth nothing
+    as the reference.
 
     What a type is (its kind and place) is worked out once per type. The
     player's gear is read once per drawing pass, when the pass makes its
@@ -34,7 +38,9 @@
 ]]
 
 require "ParavelsEnhancedInventory/Core/PEI"
+require "ParavelsEnhancedInventory/Inventory/Families"
 
+local Families = PEI.Families
 local Upgrade = PEI.Upgrade or {}
 PEI.Upgrade = Upgrade
 
@@ -86,31 +92,38 @@ local function infoOf(item)
     return info
 end
 
--- The two measures of an item of that kind (the second is 0 for the kinds
--- that have one). Broken items are worth nothing.
-local function measures(kind, item, player)
-    if item:isBroken() then return 0, 0 end
+-- What an item of that kind is worth. Broken items are worth nothing.
+local function worth(kind, item, player)
+    if item:isBroken() then return 0 end
     if kind == CLOTHING then
-        return item:getBiteDefense() + item:getScratchDefense() + item:getBulletDefense(),
-            item:getInsulation() + item:getWindresistance() + item:getWaterResistance()
+        return item:getBiteDefense() + item:getScratchDefense() + item:getBulletDefense()
     elseif kind == BAG then
-        return item:getItemContainer():getEffectiveCapacity(player), 0
+        return item:getItemContainer():getEffectiveCapacity(player)
     end
-    return (item:getMinDamage() + item:getMaxDamage()) / 2, 0
+    return (item:getMinDamage() + item:getMaxDamage()) / 2
 end
 
 --[[
     What the player's gear is worth, read as the items shown ask for it:
         player
-        worn   place key -> { first measure, second measure } of what the
-               player wears there
-        armed  weapon class key -> first measure of the best weapon of that
-               class in hand or attached
+        hotbar the player's hotbar, nil without one
+        worn   place key -> what the player wears there is worth
+        armed  weapon class key -> worth of the best weapon of that class in
+               hand or attached
         fits   attachment type -> the hotbar slot indexes that take it, with
                what hangs on the hotbar (`attached`: slot index -> item)
 ]]
 function Upgrade.newReference(playerNum)
-    return { player = getSpecificPlayer(playerNum), worn = {}, fits = {} }
+    return { player = getSpecificPlayer(playerNum), hotbar = getPlayerHotbar(playerNum), worn = {}, fits = {} }
+end
+
+-- Whether the hotbar holds `item`, as the game's own windows decide it
+-- (ISHotbar:isInHotbar). Not by the item's attached slot: it is saved with
+-- the item and can outlive the attachment (another item took the slot, or
+-- it was never cleared), and then the item is loose in every window of the
+-- game, only moving it (which clears the slot) made the mark come back.
+local function isAttached(reference, item)
+    return reference.hotbar ~= nil and reference.hotbar:isInHotbar(item)
 end
 
 -- Whether what the player wears at `location` is in the way of an item
@@ -119,10 +132,10 @@ local function takesPlaceOf(group, location, wornLocation)
     return location == wornLocation or group:isExclusive(location, wornLocation)
 end
 
-local function wornMeasures(reference, info)
-    local worth = reference.worn[info.key]
-    if worth then return worth[1], worth[2] end
-    local first, second = 0, 0
+local function wornWorth(reference, info)
+    local total = reference.worn[info.key]
+    if total then return total end
+    total = 0
     local player = reference.player
     local wornItems = player:getWornItems()
     local group = wornItems:getBodyLocationGroup()
@@ -131,21 +144,20 @@ local function wornMeasures(reference, info)
         local item = worn:getItem()
         local wornInfo = infoOf(item)
         if wornInfo and wornInfo.kind == info.kind and takesPlaceOf(group, info.place, worn:getLocation()) then
-            local a, b = measures(info.kind, item, player)
-            first, second = first + a, second + b
+            total = total + worth(info.kind, item, player)
         end
     end
-    reference.worn[info.key] = { first, second }
-    return first, second
+    reference.worn[info.key] = total
+    return total
 end
 
--- Raises the best measure of the weapon's class in `armed` if `item` is a
+-- Raises the best worth of the weapon's class in `armed` if `item` is a
 -- weapon that beats it.
 local function addArmed(armed, item, player)
     local info = item and infoOf(item)
     if not info or info.kind ~= WEAPON then return end
-    local first = measures(WEAPON, item, player)
-    if first > (armed[info.key] or -1) then armed[info.key] = first end
+    local itemWorth = worth(WEAPON, item, player)
+    if itemWorth > (armed[info.key] or -1) then armed[info.key] = itemWorth end
 end
 
 -- What the player has in hand or attached, by weapon class.
@@ -164,10 +176,10 @@ end
 -- What the bare hands are worth, the game's own "weapon" for them; a game
 -- constant, so read once.
 local bareHandsWorth
-local function bareHandsMeasure(player)
+local function bareHandsWorthOf(player)
     if bareHandsWorth == nil then
         local fists = instanceItem("Base.BareHands")
-        bareHandsWorth = fists and measures(WEAPON, fists, player) or 0
+        bareHandsWorth = fists and worth(WEAPON, fists, player) or 0
     end
     return bareHandsWorth
 end
@@ -175,12 +187,12 @@ end
 -- What the player has of `info`'s class: the best weapon of it in hand or
 -- attached, or nothing at all, which is worth the bare hands for melee (so
 -- only what hits harder than fists is better) and zero for ranged.
-local function armedMeasures(reference, info)
+local function armedWorth(reference, info)
     reference.armed = reference.armed or armedWeapons(reference)
-    local first = reference.armed[info.key]
-    if first then return first, 0 end
-    if info.place == "melee" then return bareHandsMeasure(reference.player), 0 end
-    return 0, 0
+    local armed = reference.armed[info.key]
+    if armed then return armed end
+    if info.place == "melee" then return bareHandsWorthOf(reference.player) end
+    return 0
 end
 
 -- The slots of the player's hotbar (belt, back, holsters...) that take an
@@ -191,7 +203,7 @@ local function slotsFor(reference, item, attachment)
     local fits = reference.fits[attachment]
     if fits then return fits end
     fits = {}
-    local hotbar = getPlayerHotbar(reference.player:getPlayerNum())
+    local hotbar = reference.hotbar
     if hotbar and hotbar.replacements and hotbar.replacements[attachment] ~= "null" then
         for slotIndex, slot in pairs(hotbar.availableSlot) do
             if hotbar:canBeAttached(slot, item) then table.insert(fits, slotIndex) end
@@ -207,12 +219,12 @@ end
 local function isBetterAttached(reference, item, info)
     if not info.attachment or item:isBroken() then return false end
     local fits = slotsFor(reference, item, info.attachment)
-    local first = info.kind == WEAPON and measures(WEAPON, item, reference.player)
+    local weaponWorth = info.kind == WEAPON and worth(WEAPON, item, reference.player)
     for _, slotIndex in ipairs(fits) do
         local attached = fits.attached[slotIndex]
         if not attached then return true end
-        local attachedInfo = first and infoOf(attached)
-        if attachedInfo and attachedInfo.key == info.key and first > measures(WEAPON, attached, reference.player) then
+        local attachedInfo = weaponWorth and infoOf(attached)
+        if attachedInfo and attachedInfo.key == info.key and weaponWorth > worth(WEAPON, attached, reference.player) then
             return true
         end
     end
@@ -223,11 +235,9 @@ end
 -- in the same place.
 local function isBetterInPlace(reference, item, info)
     if not info.kind then return false end
-    local a, b = measures(info.kind, item, reference.player)
-    local ra, rb
-    if info.kind == WEAPON then ra, rb = armedMeasures(reference, info) else ra, rb = wornMeasures(reference, info) end
-    if not ra then return false end
-    return a >= ra and b >= rb and (a > ra or b > rb)
+    local has
+    if info.kind == WEAPON then has = armedWorth(reference, info) else has = wornWorth(reference, info) end
+    return worth(info.kind, item, reference.player) > has
 end
 
 -- Whether `item` is better than what the player has on, in hand or attached
@@ -235,6 +245,7 @@ end
 -- (or nothing does); `reference` is Upgrade.newReference's, for the whole pass.
 function Upgrade.isBetter(reference, item)
     local info = infoOf(item)
-    if not info or item:isEquipped() or item:getAttachedSlot() ~= -1 then return false end
+    if not info or item:isEquipped() or isAttached(reference, item) then return false end
+    if not Families.earnsTopIndicator(item) then return false end
     return isBetterInPlace(reference, item, info) or isBetterAttached(reference, item, info)
 end

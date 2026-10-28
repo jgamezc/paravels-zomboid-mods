@@ -17,6 +17,7 @@
 	"IGUI_PEI_Opt_showIconHalo": "Mostrar halo del icono",
 	"IGUI_PEI_Opt_iconHaloIntensity": "Intensidad del halo del icono",
 	"IGUI_PEI_Section_tabs": "Pestañas de contenedores",
+	"IGUI_PEI_Opt_showProximityTab": "Mostrar la pestaña Cercanos",
 	"IGUI_PEI_Opt_loopTabs": "La rueda pasa de la última pestaña a la primera",
 	"IGUI_PEI_FontSmall": "Pequeña",
 	"IGUI_PEI_FontMedium": "Mediana",

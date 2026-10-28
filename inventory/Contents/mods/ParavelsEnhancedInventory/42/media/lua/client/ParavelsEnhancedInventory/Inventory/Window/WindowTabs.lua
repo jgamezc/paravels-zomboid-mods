@@ -174,11 +174,13 @@ local function layoutRow(page)
             maxFirst = maxFirst - 1
         end
         first = PUI.clamp(page.pei_tabFirst or 1, 1, maxFirst)
-        -- A newly selected container, a change in the containers, or the name
-        -- coming or going (the tabs change width) brings the selected tab into
-        -- sight; otherwise the arrows may leave it out.
+        -- A newly selected container, a change in the containers, the name
+        -- coming or going (the tabs change width) or a change in the room
+        -- (the window resized, so the selected tab may no longer fit) brings
+        -- the selected tab into sight; otherwise the arrows may leave it out.
         if selectedIndex and (buttons[selectedIndex].inventory ~= page.pei_tabSelectedInventory
-                or count ~= page.pei_tabCount or showsName ~= page.pei_tabShowsName) then
+                or count ~= page.pei_tabCount or showsName ~= page.pei_tabShowsName
+                or fullRoom ~= page.pei_tabFullRoom) then
             if selectedIndex < first then first = selectedIndex end
             while first < selectedIndex and spanWidth(widths, first, selectedIndex, gap) > roomStartingAt(first) do
                 first = first + 1
@@ -194,12 +196,15 @@ local function layoutRow(page)
     page.pei_tabSelectedInventory = selectedIndex and buttons[selectedIndex].inventory
     page.pei_tabCount = count
     page.pei_tabShowsName = showsName
+    page.pei_tabFullRoom = fullRoom
 
     local tabs, x, lastShown, rowEnd = {}, 0, 0, 0
     for index, button in ipairs(buttons) do
         local tab = { button = button, w = widths[index], name = names[index] }
         if index >= first then
-            if x + widths[index] <= room then
+            -- The first tab in sight always shows, even if it overflows the
+            -- room, so the row is never empty while its arrows are.
+            if index == first or x + widths[index] <= room then
                 tab.x = x
                 rowEnd = x + widths[index]
                 x = x + widths[index] + gap

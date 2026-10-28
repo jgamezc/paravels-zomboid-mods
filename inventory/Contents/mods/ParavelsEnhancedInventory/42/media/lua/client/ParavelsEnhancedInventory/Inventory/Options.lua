@@ -45,6 +45,7 @@ Options.DEFINITIONS = {
     { section = "items", id = "showIconShadow",    type = "tickbox", default = true },
     { section = "items", id = "showIconHalo",      type = "tickbox", default = true },
     { section = "items", id = "iconHaloIntensity", type = "slider",  min = 0, max = 200, step = 10, default = 100 },
+    { section = "tabs",  id = "showProximityTab",  type = "tickbox", default = true },
     { section = "tabs",  id = "loopTabs",          type = "tickbox", default = true },
 }
 -- ------------------------------------------------------------------ --

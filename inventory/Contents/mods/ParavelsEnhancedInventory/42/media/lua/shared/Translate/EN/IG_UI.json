@@ -17,6 +17,7 @@
 	"IGUI_PEI_Opt_showIconHalo": "Show icon halo",
 	"IGUI_PEI_Opt_iconHaloIntensity": "Icon halo intensity",
 	"IGUI_PEI_Section_tabs": "Container tabs",
+	"IGUI_PEI_Opt_showProximityTab": "Show the Nearby tab",
 	"IGUI_PEI_Opt_loopTabs": "Mouse wheel loops from the last tab to the first",
 	"IGUI_PEI_FontSmall": "Small",
 	"IGUI_PEI_FontMedium": "Medium",

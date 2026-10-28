@@ -30,8 +30,10 @@ require "ISUI/LootWindow/ISLootWindowContainerControls"
 require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
 require "ParavelsEnhancedInventory/Inventory/Window/OpenTab"
+require "ParavelsEnhancedInventory/Inventory/Options"
 
 local OpenTab = PEI.OpenTab
+local Options = PEI.Options
 
 local ProximityTab = PEI.ProximityTab or {}
 PEI.ProximityTab = ProximityTab
@@ -113,8 +115,17 @@ PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab",
     if page.onCharacter then return end
     if state == "begin" then
         OpenTab.removeButton(page, OpenTab.PROXIMITY)
+        -- What the tabs of this window are made with: followOption compares it
+        -- with the option to know the window is out of date.
+        page.pei_proximityTabBuiltWith = Options.get("showProximityTab")
         local playerObj = getSpecificPlayer(page.player)
         if not playerObj or playerObj:getVehicle() then return end
+        if not page.pei_proximityTabBuiltWith then
+            -- Never left chosen with no tab to show: the floor's own tab, or
+            -- the container the game picks, takes over.
+            if OpenTab.chosen(page) == OpenTab.PROXIMITY then OpenTab.choose(page, OpenTab.CONTAINER) end
+            return
+        end
         local floor = ISInventoryPage.GetFloorContainer(page.player)
         local button = page:addContainerButton(floor, getTexture(ProximityTab.TEXTURE), getText("IGUI_PEI_ProximityTab"), nil)
         button.capacity = floor:getMaxWeight()
@@ -135,6 +146,19 @@ PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab",
         -- The tab picked instead is gone: back to this one.
         OpenTab.choose(page, OpenTab.PROXIMITY)
         pane.inventory = floor
+    end
+end)
+
+-- The tabs are only made when the game asks, so a change of the option
+-- asks for them again, on the windows built with the other value. That
+-- request goes through "begin" above, which stores the new value, so it
+-- is made once and not on every tick.
+PUI.listen(Events.OnTick, "PEI.ProximityTab.followOption", function()
+    for playerNum = 0, getNumActivePlayers() - 1 do
+        local page = getPlayerLoot(playerNum)
+        if page and page.pei_proximityTabBuiltWith ~= nil and page.pei_proximityTabBuiltWith ~= Options.get("showProximityTab") then
+            page:refreshBackpacks()
+        end
     end
 end)
 

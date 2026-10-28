@@ -309,11 +309,15 @@ end
 -- Top indicator rules
 -- ------------------------------------------------------------------ --
 
--- Clothing worth a frame protects: against bites (leather and padded
--- jackets, armour), bullets, or at least well against scratches. Plain
+-- Clothing gets the frame when it protects at all, against bites (leather
+-- and padded jackets, armour), bullets or scratches, however little. Plain
 -- clothes are worn, not sought out.
+-- The game reports a broken garment's protection as zero, and this is
+-- cached per type: the first broken pair seen would hide every other pair
+-- of its type. So it is read from a new item of the type, which is intact.
 local function isProtective(item)
-    return item:getBiteDefense() > 0 or item:getBulletDefense() > 0 or item:getScratchDefense() >= 30
+    local intact = instanceItem(item:getFullType()) or item
+    return intact:getBiteDefense() > 0 or intact:getBulletDefense() > 0 or intact:getScratchDefense() > 0
 end
 
 local function isWearableBag(item)
@@ -405,6 +409,12 @@ end
 -- Which volume of its skill a book is (1 to 5), or nil when it is not a skill book.
 function Families.skillVolume(item)
     return typeInfo(item).skillVolume
+end
+
+-- Whether the item's type earns the top indicator by its rules (not food
+-- that is ready to eat, which depends on the item's state).
+function Families.earnsTopIndicator(item)
+    return typeInfo(item).hasTopIndicator
 end
 
 -- A bottle or a jug is food only while it holds something to drink: the same
