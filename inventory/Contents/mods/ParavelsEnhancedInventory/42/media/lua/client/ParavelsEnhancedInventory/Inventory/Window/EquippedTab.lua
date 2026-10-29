@@ -3,16 +3,17 @@
 
     The player's window gets one more tab, right before the main inventory
     (the first one, leftmost):
-    the same container (the player's inventory), showing only what is worn,
-    held, on a key ring or attached to the hotbar. The main inventory tab
-    shows everything else. Both are vanilla container buttons for the same
-    ItemContainer, so clicks, drops, context menus and transfers stay
-    vanilla's; only which entries the pane lists depends on the tab, which
-    Window/OpenTab.lua says.
+    the same container (the player's inventory), showing what is worn, on a
+    key ring or attached to the hotbar. Items held in the hands stay in the
+    main inventory tab unless they are also attached. Both are vanilla
+    container buttons for the same ItemContainer, so clicks, drops, context
+    menus and transfers stay vanilla's; only which entries the pane lists
+    depends on the tab, which Window/OpenTab.lua says.
 ]]
 
 require "ISUI/ISInventoryPage"
 require "ISUI/ISInventoryPane"
+require "TimedActions/ISAttachItemHotbar"
 require "ParavelsEnhancedInventory/Inventory/Entries"
 require "ParavelsEnhancedInventory/Inventory/Window/OpenTab"
 
@@ -93,11 +94,26 @@ end)
 -- The entries each tab lists
 -- ------------------------------------------------------------------ --
 
+local function isHeld(entry, primaryId, secondaryId)
+    if not entry.equipped or entry.inHotbar or not (primaryId or secondaryId) then return false end
+    for index = Entries.FIRST_ITEM, #entry.items do
+        local itemId = entry.items[index]:getID()
+        if itemId == primaryId or itemId == secondaryId then return true end
+    end
+    return false
+end
+
 local function keepOnlyShown(pane)
     local showEquipped = EquippedTab.isListing(pane)
+    local playerObj = getSpecificPlayer(pane.player)
+    local primary = playerObj and playerObj:getPrimaryHandItem()
+    local secondary = playerObj and playerObj:getSecondaryHandItem()
+    local primaryId = primary and primary:getID()
+    local secondaryId = secondary and secondary:getID()
     local kept = {}
     for _, entry in ipairs(pane.itemslist) do
-        if Entries.isEquipped(entry) == showEquipped then kept[#kept + 1] = entry end
+        local isEquipped = Entries.isEquipped(entry) and not isHeld(entry, primaryId, secondaryId)
+        if isEquipped == showEquipped then kept[#kept + 1] = entry end
     end
     pane.itemslist = kept
 end
@@ -128,17 +144,29 @@ local function equippedItemIds(playerObj)
     return table.concat(ids, ",")
 end
 
+local function updateEquipmentState(playerObj, forceRefresh)
+    local page = getPlayerInventory(playerObj:getPlayerNum())
+    if not page then return end
+
+    local equipped = equippedItemIds(playerObj)
+    local changed = page.pei_equippedIds ~= equipped
+    page.pei_equippedIds = equipped
+    if changed or forceRefresh then playerObj:getInventory():setDrawDirty(true) end
+end
+
+-- The vanilla attach action marks its page for rendering, but the split tabs
+-- depend on the inventory container's dirty state to move the item between
+-- their lists. Flag it as soon as the action has updated hotbar.attachedItems.
+PUI.override(ISAttachItemHotbar, "perform", function(vanilla, action)
+    local result = vanilla(action)
+    if action.character then updateEquipmentState(action.character, true) end
+    return result
+end)
+
 PUI.listen(Events.OnTick, "PEI.EquippedTab.flagEquipmentChange", function()
     for playerNum = 0, getNumActivePlayers() - 1 do
-        local page = getPlayerInventory(playerNum)
         local playerObj = getSpecificPlayer(playerNum)
-        if page and playerObj then
-            local equipped = equippedItemIds(playerObj)
-            if page.pei_equippedIds ~= equipped then
-                page.pei_equippedIds = equipped
-                playerObj:getInventory():setDrawDirty(true)
-            end
-        end
+        if playerObj then updateEquipmentState(playerObj) end
     end
 end)
 
