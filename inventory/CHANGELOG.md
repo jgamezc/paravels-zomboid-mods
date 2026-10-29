@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.1.2 - 2026-10-29
+- Fixed items staying in their old tab after equipping or unequipping them (clothing, hand items and hotbar attachments): the tabs now refresh right away.
+
 ## 1.1.1 - 2026-10-29
 - Show each transfer button only when a click would move an item
 - Hide "same type to the displayed container" on the Nearby tab, where "same type to nearby containers" already covers it

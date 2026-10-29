@@ -109,6 +109,39 @@ local FILTER_BEFORE_RESTORING = {
     end,
 }
 
+-- Vanilla only rebuilds a pane when its container is flagged as changed, and
+-- equipping an item does not flag it (an item carried in from the floor or
+-- another container is moved first, which does, and equipped afterwards).
+-- Vanilla can live with that, since it marks equipped items on the fly; the
+-- tabs cannot: the item would stay in the tab it was in until the next
+-- refresh. So the container is flagged when what is equipped changes.
+local function equippedItemIds(playerObj)
+    local ids = {}
+    local wornItems = playerObj:getWornItems()
+    for i = 0, wornItems:size() - 1 do ids[#ids + 1] = wornItems:get(i):getItem():getID() end
+    local primary, secondary = playerObj:getPrimaryHandItem(), playerObj:getSecondaryHandItem()
+    if primary then ids[#ids + 1] = primary:getID() end
+    if secondary then ids[#ids + 1] = secondary:getID() end
+    local hotbar = getPlayerHotbar(playerObj:getPlayerNum())
+    for _, item in pairs(hotbar and hotbar.attachedItems or {}) do ids[#ids + 1] = item:getID() end
+    table.sort(ids)
+    return table.concat(ids, ",")
+end
+
+PUI.listen(Events.OnTick, "PEI.EquippedTab.flagEquipmentChange", function()
+    for playerNum = 0, getNumActivePlayers() - 1 do
+        local page = getPlayerInventory(playerNum)
+        local playerObj = getSpecificPlayer(playerNum)
+        if page and playerObj then
+            local equipped = equippedItemIds(playerObj)
+            if page.pei_equippedIds ~= equipped then
+                page.pei_equippedIds = equipped
+                playerObj:getInventory():setDrawDirty(true)
+            end
+        end
+    end
+end)
+
 -- The entries are filtered once vanilla has built and sorted them, just
 -- before it restores the selection: the selection is by row, so it must be
 -- restored on the rows that show.
