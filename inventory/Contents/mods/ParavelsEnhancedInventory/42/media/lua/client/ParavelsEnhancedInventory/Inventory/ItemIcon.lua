@@ -139,6 +139,13 @@ local function drawUpgradeMark(element, right, top, alpha)
     end)
 end
 
+-- Marks a context-menu option for an attachment slot with the same symbol
+-- and theme colour as the inventory mark.
+function ItemIcon.markUpgradeOption(option)
+    option.iconTexture = getTexture("media/ui/ParavelsUI/icons/" .. UPGRADE_MARK .. ".png")
+    option.color = currentMark().upgradeColor
+end
+
 -- The mark for a skill book's volume (Families.skillVolume): a Roman numeral
 -- in the theme's text colour, outlined like any mark over an icon. It takes
 -- the upgrade mark's place (no item is both gear and a book): the numeral's
