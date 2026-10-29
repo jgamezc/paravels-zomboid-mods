@@ -51,6 +51,15 @@ local function startDrag(pane, model, cell)
     ISMouseDrag.draggingFocus = pane
 end
 
+local function updateDragStarted(pane)
+    if not pane.dragging or pane.dragStarted or not pane.draggingX then return end
+    -- Match vanilla's threshold in pane-local UI coordinates; screen and UI
+    -- coordinates can be scaled differently.
+    local movedX = math.abs(pane:getMouseX() - pane.draggingX)
+    local movedY = math.abs(pane:getMouseY() - pane.draggingY)
+    if movedX > DRAG_THRESHOLD or movedY > DRAG_THRESHOLD then pane.dragStarted = true end
+end
+
 local function endDrag(pane)
     pane.dragging = nil
     pane.dragStarted = false
@@ -85,6 +94,7 @@ end)
 
 ViewMode.overrideForGrid("onMouseUp", function(vanilla, pane, x, y)
     if not isMousePlayer(pane) then return end
+    updateDragStarted(ISMouseDrag.draggingFocus or pane)
 
     -- Items dropped here from another pane: vanilla's drop logic only
     -- depends on the container, so it is reused. mouseOverOption = 0 skips
@@ -128,11 +138,7 @@ ViewMode.overrideForGrid("onMouseMove", function(vanilla, pane, dx, dy)
     pane.contextButton3:setVisible(false)
     pane.mouseOverOption = 0
 
-    if pane.dragging and not pane.dragStarted then
-        local movedX = math.abs(pane:getMouseX() - pane.draggingX)
-        local movedY = math.abs(pane:getMouseY() - pane.draggingY)
-        if movedX > DRAG_THRESHOLD or movedY > DRAG_THRESHOLD then pane.dragStarted = true end
-    end
+    updateDragStarted(pane)
 end)
 
 -- Vanilla's double-click for a single item (the InventoryItem branch of
@@ -155,9 +161,12 @@ end
 
 ViewMode.overrideForGrid("onMouseDoubleClick", function(vanilla, pane, x, y)
     if pane.vscroll and pane:isMouseOverScrollBar() then return vanilla(pane, x, y) end
-    local _, layout = GridState.get(pane)
+    local model, layout = GridState.get(pane)
     local cell = GridLayout.cellUnderMouse(pane, layout)
     if not cell then return end
+    -- A double-click on the last Shift-selected cell must not consume that
+    -- item while the player is trying to drag the whole selection.
+    if GridSelection.isSelected(model, cell) and #GridSelection.selectedThings(pane, model) > 1 then return end
     if cell.sub then
         doubleClickItem(pane, cell.item)
         return
