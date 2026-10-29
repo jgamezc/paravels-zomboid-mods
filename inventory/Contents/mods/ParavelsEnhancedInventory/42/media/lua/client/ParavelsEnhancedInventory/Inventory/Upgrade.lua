@@ -1,46 +1,26 @@
 --[[
-    Paravel's Enhanced Inventory - gear better than what the player has on
+    Paravel's Enhanced Inventory - character equipment improvements
 
-    Says whether an item is better than what the player wears, holds or has
-    attached in the same place, for the mark the grid and the list draw on it
-    (ItemIcon.drawUpgradeMark). "Better" means worth strictly more by the one
-    measure of its kind:
+    The mark means an item improves protection, damage or capacity. Any
+    positive difference counts, even if another attribute is worse:
 
-    - Clothing: protection only (bite, scratch and bullet defence), against
-      everything the player wears where it goes or in a place that excludes
-      it, as the game's own clothing tooltip counts it. Warmth (insulation,
-      wind and water resistance) is ignored: only protective clothing gets
-      the mark, and weighing warmth too hid it from football pants (more
-      protection) when long padded trousers (warmer) were worn. An empty
-      place is worth nothing, so any garment that protects at all is better
-      than none.
-    - Wearable bags: the capacity they give, against the bag worn in that place.
-    - Weapons: average damage, against the best weapon of the same kind the
-      player has in hand or attached (hotbar, belt, back...): melee, or
-      ranged with the same ammunition. With nothing of that kind, melee
-      weapons are compared with the bare hands and ranged ones with nothing,
-      like an empty clothing place (broken ones are worth nothing, so never
-      beat it).
-    - Attachable items (weapons, tools, planks...): also better when the game
-      lets the player attach them to a hotbar slot (belt, back, holster...)
-      that is empty, or where hangs a weapon of the same class that they beat,
-      slot by slot. The slots are the ones the player has now, and the game
-      says what fits each (ISHotbar:canBeAttached).
-    Only items that earn the top indicator (Families.earnsTopIndicator) get
-    the mark: plain clothes and tools are not worth flagging. Worn, held,
-    attached and broken items never get it, and broken ones are worth nothing
-    as the reference.
+    - Clothing: total bite, scratch and bullet defence against clothing worn
+      in the same or an excluding body location. Warmth and weather protection
+      are ignored.
+    - Wearable bags: effective capacity against the bag worn in that place.
+    - Weapons: average damage against a weapon of the same class in a
+      compatible hotbar slot. The class is melee, or ranged with the same
+      ammunition. An empty compatible slot is worth zero; other occupied slots
+      do not affect the comparison. Slot compatibility follows
+      ISHotbar:canBeAttached.
 
-    What a type is (its kind and place) is worked out once per type. The
-    player's gear is read once per drawing pass, when the pass makes its
-    reference (Upgrade.newReference), and only as far as the items shown ask
-    for it. Items of no kind cost one type lookup.
+    Item groups and the top indicator do not determine eligibility. Already
+    equipped items and broken candidates never get the mark; broken reference
+    items are worth nothing. Item types are described once, and the player's
+    worn gear and compatible slots are read lazily per drawing pass.
 ]]
 
 require "ParavelsEnhancedInventory/Core/PEI"
-require "ParavelsEnhancedInventory/Inventory/Families"
-
-local Families = PEI.Families
 local Upgrade = PEI.Upgrade or {}
 PEI.Upgrade = Upgrade
 
@@ -53,12 +33,11 @@ local CLOTHING, BAG, WEAPON = "clothing", "bag", "weapon"
 -- false. A type that can only be attached has no kind, place or key.
 local typeCache = {}
 
--- A weapon's class: melee, or ranged with its ammunition. Ranged weapons
--- that name no ammunition have none.
+-- A weapon's class: melee, or ranged with its ammunition when known.
 local function weaponClass(item)
     if not item:isRanged() then return "melee" end
     local ammo = item:getAmmoType()
-    if not ammo then return nil end
+    if not ammo then return "ranged" end
     return "ranged:" .. tostring(ammo:getItemKey())
 end
 
@@ -108,8 +87,6 @@ end
         player
         hotbar the player's hotbar, nil without one
         worn   place key -> what the player wears there is worth
-        armed  weapon class key -> worth of the best weapon of that class in
-               hand or attached
         fits   attachment type -> the hotbar slot indexes that take it, with
                what hangs on the hotbar (`attached`: slot index -> item)
 ]]
@@ -151,48 +128,46 @@ local function wornWorth(reference, info)
     return total
 end
 
--- Raises the best worth of the weapon's class in `armed` if `item` is a
--- weapon that beats it.
-local function addArmed(armed, item, player)
-    local info = item and infoOf(item)
-    if not info or info.kind ~= WEAPON then return end
-    local itemWorth = worth(WEAPON, item, player)
-    if itemWorth > (armed[info.key] or -1) then armed[info.key] = itemWorth end
-end
-
--- What the player has in hand or attached, by weapon class.
-local function armedWeapons(reference)
-    local armed = {}
+-- Whether wearing `candidate` creates more distinct hotbar slots than the
+-- clothing it would replace. ISHotbar refreshes the same slot types from
+-- worn items, deduplicating slots that multiple items provide.
+local function addsAttachmentSlots(reference, candidate, info)
     local player = reference.player
-    addArmed(armed, player:getPrimaryHandItem(), player)
-    addArmed(armed, player:getSecondaryHandItem(), player)
-    local attached = player:getAttachedItems()
-    for index = 0, attached:size() - 1 do
-        addArmed(armed, attached:get(index):getItem(), player)
-    end
-    return armed
-end
+    local hotbar = reference.hotbar
+    if not hotbar or not player then return false end
 
--- What the bare hands are worth, the game's own "weapon" for them; a game
--- constant, so read once.
-local bareHandsWorth
-local function bareHandsWorthOf(player)
-    if bareHandsWorth == nil then
-        local fists = instanceItem("Base.BareHands")
-        bareHandsWorth = fists and worth(WEAPON, fists, player) or 0
-    end
-    return bareHandsWorth
-end
+    local wornItems = player:getWornItems()
+    local group = wornItems:getBodyLocationGroup()
+    local currentSlots = {}
+    local candidateSlots = {}
 
--- What the player has of `info`'s class: the best weapon of it in hand or
--- attached, or nothing at all, which is worth the bare hands for melee (so
--- only what hits harder than fists is better) and zero for ranged.
-local function armedWorth(reference, info)
-    reference.armed = reference.armed or armedWeapons(reference)
-    local armed = reference.armed[info.key]
-    if armed then return armed end
-    if info.place == "melee" then return bareHandsWorthOf(reference.player) end
-    return 0
+    local function addProvidedSlots(slots, item)
+        if not item or (player.isHandItem and player:isHandItem(item)) then return end
+        local provided = item:getAttachmentsProvided()
+        if not provided then return end
+        for index = 0, provided:size() - 1 do
+            local slotDef = hotbar:getSlotDef(provided:get(index))
+            if slotDef then slots[slotDef.type] = true end
+        end
+    end
+
+    currentSlots.Back = true
+    candidateSlots.Back = true
+    for index = 0, wornItems:size() - 1 do
+        local worn = wornItems:get(index)
+        local item = worn:getItem()
+        addProvidedSlots(currentSlots, item)
+        if not takesPlaceOf(group, info.place, worn:getLocation()) then
+            addProvidedSlots(candidateSlots, item)
+        end
+    end
+    addProvidedSlots(candidateSlots, candidate)
+
+    local currentCount = 0
+    local candidateCount = 0
+    for _ in pairs(currentSlots) do currentCount = currentCount + 1 end
+    for _ in pairs(candidateSlots) do candidateCount = candidateCount + 1 end
+    return candidateCount > currentCount
 end
 
 -- The slots of the player's hotbar (belt, back, holsters...) that take an
@@ -214,38 +189,48 @@ local function slotsFor(reference, item, attachment)
     return fits
 end
 
--- Whether `item` could be attached where it would be worth more than what
--- hangs there: an empty slot, or a weapon of the same class that it beats.
-local function isBetterAttached(reference, item, info)
-    if not info.attachment or item:isBroken() then return false end
+-- The slots where `item` improves the weapon already attached, or fits an
+-- empty slot. Occupied slots of another weapon class are ignored.
+local function improvedSlots(reference, item, info)
+    if info.kind ~= WEAPON or not info.attachment or item:isBroken() then return {} end
     local fits = slotsFor(reference, item, info.attachment)
-    local weaponWorth = info.kind == WEAPON and worth(WEAPON, item, reference.player)
+    local weaponWorth = worth(WEAPON, item, reference.player)
+    local improved = {}
     for _, slotIndex in ipairs(fits) do
         local attached = fits.attached[slotIndex]
-        if not attached then return true end
-        local attachedInfo = weaponWorth and infoOf(attached)
-        if attachedInfo and attachedInfo.key == info.key and weaponWorth > worth(WEAPON, attached, reference.player) then
-            return true
+        if not attached then
+            if weaponWorth > 0 then improved[#improved + 1] = slotIndex end
+        else
+            local attachedInfo = infoOf(attached)
+            if attachedInfo and attachedInfo.key == info.key and weaponWorth > worth(WEAPON, attached, reference.player) then
+                improved[#improved + 1] = slotIndex
+            end
         end
     end
-    return false
+    return improved
 end
 
--- Whether `item` is better than what the player has on, in hand or attached
--- in the same place.
+local function isBetterAttached(reference, item, info)
+    return #improvedSlots(reference, item, info) > 0
+end
+
+-- The compatible hotbar slots where the item earns its upgrade mark.
+function Upgrade.improvedSlotIndexes(reference, item)
+    local info = infoOf(item)
+    if not info or isAttached(reference, item) then return {} end
+    return improvedSlots(reference, item, info)
+end
+
+-- Whether `item` improves what the player wears in the same body location.
 local function isBetterInPlace(reference, item, info)
-    if not info.kind then return false end
-    local has
-    if info.kind == WEAPON then has = armedWorth(reference, info) else has = wornWorth(reference, info) end
-    return worth(info.kind, item, reference.player) > has
+    if info.kind ~= CLOTHING and info.kind ~= BAG then return false end
+    if worth(info.kind, item, reference.player) > wornWorth(reference, info) then return true end
+    return (info.kind == CLOTHING or info.kind == BAG) and addsAttachmentSlots(reference, item, info)
 end
 
--- Whether `item` is better than what the player has on, in hand or attached
--- in the same place, or fits a hotbar slot where it beats what hangs there
--- (or nothing does); `reference` is Upgrade.newReference's, for the whole pass.
+-- Whether `item` improves worn gear or a weapon in a compatible slot.
 function Upgrade.isBetter(reference, item)
     local info = infoOf(item)
-    if not info or item:isEquipped() or isAttached(reference, item) then return false end
-    if not Families.earnsTopIndicator(item) then return false end
+    if not info or isAttached(reference, item) then return false end
     return isBetterInPlace(reference, item, info) or isBetterAttached(reference, item, info)
 end

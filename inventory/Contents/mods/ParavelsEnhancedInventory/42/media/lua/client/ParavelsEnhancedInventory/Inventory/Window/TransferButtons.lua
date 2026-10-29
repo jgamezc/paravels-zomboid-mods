@@ -35,8 +35,9 @@ local LOAD_TOKEN = {}
 -- Drop all
 -- Vanilla has no "move to floor" for the player's inventory, only for a
 -- container in the loot window. This one drops what transfer all would
--- move (not equipped, favourite, on the hotbar or a key ring), the same way
--- transfer all does when the loot window shows the floor. On the equipped
+-- move (not worn, favourite, on the hotbar or a key ring), the same way
+-- transfer all does when the loot window shows the floor. A held item is
+-- included only when the destination is the floor. On the equipped
 -- tab it drops what the tab shows instead (still not favourites): vanilla's
 -- drop takes each item off first. The class is made
 -- once, so its handlers and buttons survive a reload; its methods are
@@ -57,10 +58,12 @@ local function canBeOnFloor(item)
 end
 
 -- What vanilla's transfer all leaves where it is.
-local function isMovable(item, inventory, playerObj, hotbar)
+local function isMovable(item, inventory, playerObj, hotbar, toFloor)
     local isKeyRing = inventory == playerObj:getInventory()
         and (item:isItemType(ItemType.KEY_RING) or item:hasTag(ItemTag.KEY_RING))
-    return not (item:isEquipped() or isKeyRing or hotbar:isInHotbar(item) or item:isFavorite())
+    local heldForDrop = toFloor and playerObj:isHandItem(item)
+    return not ((item:isEquipped() and not heldForDrop) or isKeyRing
+        or hotbar:isInHotbar(item) or item:isFavorite())
 end
 
 -- What the equipped tab shows: its entries are the pane's rows.
@@ -87,7 +90,7 @@ local function itemsToMove(pane, toFloor)
     local allItems = inventory:getItems()
     for i = 0, allItems:size() - 1 do
         local item = allItems:get(i)
-        if isMovable(item, inventory, playerObj, hotbar) and not (toFloor and not canBeOnFloor(item)) then
+        if isMovable(item, inventory, playerObj, hotbar, toFloor) and not (toFloor and not canBeOnFloor(item)) then
             table.insert(items, item)
         end
     end

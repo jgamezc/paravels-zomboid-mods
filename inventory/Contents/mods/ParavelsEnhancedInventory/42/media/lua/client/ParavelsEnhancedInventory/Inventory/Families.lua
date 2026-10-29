@@ -436,10 +436,11 @@ function Families.classify(item)
     local info = typeInfo(item)
     local family = info.family
     local food = Families.byId.Food
-    if family == food and instanceof(item, "Food") and item:isRotten() then
+    local isRottenFood = family == food and instanceof(item, "Food") and item:isRotten()
+    if isRottenFood then
         family = Families.byId.Misc
     elseif not Families.hasColour(family) and holdsBeverage(item) then
         family = food
     end
-    return family, info.hasTopIndicator or (family == food and isReadyToEat(item))
+    return family, not isRottenFood and (info.hasTopIndicator or (family == food and isReadyToEat(item)))
 end
