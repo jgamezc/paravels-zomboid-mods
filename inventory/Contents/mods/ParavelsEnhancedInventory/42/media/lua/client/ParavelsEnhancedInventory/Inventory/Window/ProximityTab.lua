@@ -240,7 +240,9 @@ end
 
 PUI.override(ISInventoryPane, "lootAll", function(vanilla, pane)
     if not isListing(pane) then return asBatch(vanilla, pane) end
-    return withNearbyItems(pane, asBatch, vanilla)
+    -- withNearbyItems calls its function as fn(pane), while asBatch takes
+    -- (vanilla, pane): the batch wraps a step that lists the nearby items.
+    return asBatch(function(listingPane) return withNearbyItems(listingPane, vanilla) end, pane)
 end)
 
 -- The weight shown, read by the page from the container the pane lists.

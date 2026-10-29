@@ -1,7 +1,7 @@
 name=Paravel's Enhanced Inventory
 id=ParavelsEnhancedInventory
 author=Paravel
-modversion=1.1.0
+modversion=1.1.1
 description=Adds a grid view to the inventory and loot windows. Switch between list and grid with the button in the window title bar.
 poster=poster.png
 icon=icon.png

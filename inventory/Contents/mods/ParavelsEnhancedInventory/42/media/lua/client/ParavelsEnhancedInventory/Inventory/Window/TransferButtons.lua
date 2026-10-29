@@ -12,6 +12,7 @@
 
 require "ISUI/ISInventoryPage"
 require "ParavelsEnhancedInventory/Inventory/Window/EquippedTab"
+require "ParavelsEnhancedInventory/Inventory/Window/ProximityTab"
 require "ParavelsEnhancedInventory/Inventory/Entries"
 require "ParavelsUI/Controls/IconButton"
 require "ParavelsUI/Controls/Bounds"
@@ -20,6 +21,7 @@ local Bounds = PUI.Bounds
 local Entries = PEI.Entries
 local EquippedTab = PEI.EquippedTab
 local IconButton = PUI.IconButton
+local ProximityTab = PEI.ProximityTab
 local Theme = PUI.Theme
 
 local TransferButtons = PEI.TransferButtons or {}
@@ -54,11 +56,11 @@ local function canBeOnFloor(item)
     return not (instanceof(item, "Moveable") and item:getSpriteGrid() == nil and not item:CanBeDroppedOnFloor())
 end
 
-local function isDroppable(item, inventory, playerObj, hotbar)
+-- What vanilla's transfer all leaves where it is.
+local function isMovable(item, inventory, playerObj, hotbar)
     local isKeyRing = inventory == playerObj:getInventory()
         and (item:isItemType(ItemType.KEY_RING) or item:hasTag(ItemTag.KEY_RING))
-    if item:isEquipped() or isKeyRing or hotbar:isInHotbar(item) or item:isFavorite() then return false end
-    return canBeOnFloor(item)
+    return not (item:isEquipped() or isKeyRing or hotbar:isInHotbar(item) or item:isFavorite())
 end
 
 -- What the equipped tab shows: its entries are the pane's rows.
@@ -73,24 +75,30 @@ local function shownItems(pane)
     return items
 end
 
+-- What transfer all moves out of the pane's container; when it goes to the
+-- floor, only what can be put there. The buttons offer exactly this, and
+-- drop all does it.
+local function itemsToMove(pane, toFloor)
+    if EquippedTab.isListing(pane) then return shownItems(pane) end
+    local inventory = pane.inventory
+    local playerObj = getSpecificPlayer(pane.player)
+    local hotbar = getPlayerHotbar(pane.player)
+    local items = {}
+    local allItems = inventory:getItems()
+    for i = 0, allItems:size() - 1 do
+        local item = allItems:get(i)
+        if isMovable(item, inventory, playerObj, hotbar) and not (toFloor and not canBeOnFloor(item)) then
+            table.insert(items, item)
+        end
+    end
+    return items
+end
+
 function DropAll:perform()
     if isGamePaused() then return end
     local pane = self.inventoryWindow.inventoryPane
-    local inventory = pane.inventory
-    if not inventory or not luautils.walkToContainer(inventory, self.playerNum) then return end
-    local playerObj = getSpecificPlayer(self.playerNum)
-    local hotbar = getPlayerHotbar(self.playerNum)
-    local items = {}
-    if EquippedTab.isListing(pane) then
-        items = shownItems(pane)
-    else
-        local allItems = inventory:getItems()
-        for i = 0, allItems:size() - 1 do
-            local item = allItems:get(i)
-            if isDroppable(item, inventory, playerObj, hotbar) then table.insert(items, item) end
-        end
-    end
-    pane:transferItemsByWeight(items, ISInventoryPage.GetFloorContainer(self.playerNum))
+    if not pane.inventory or not luautils.walkToContainer(pane.inventory, self.playerNum) then return end
+    pane:transferItemsByWeight(itemsToMove(pane, true), ISInventoryPage.GetFloorContainer(self.playerNum))
     pane.selected = {}
 end
 
@@ -129,21 +137,55 @@ end
 
 -- One button spec per handler class: a Lucide icon and vanilla's tooltip.
 -- `action` replaces vanilla's perform.
-local function transferSpec(class, icon, tooltip, action)
+-- `rules` (all optional) decide when it shows, besides the handler's own
+-- shouldBeVisible: `hasItems(handler)` is whether a click would move at
+-- least one item, so a button never shows to do nothing; `isRedundant(page)`
+-- leaves it out when another button does its job.
+local function transferSpec(class, icon, tooltip, action, rules)
     action = action or perform
-    return { class = class, icon = icon, tooltip = tooltip, onClick = function(handler) action(handler) end }
+    rules = rules or {}
+    return { class = class, icon = icon, tooltip = tooltip, hasItems = rules.hasItems,
+             isRedundant = rules.isRedundant, onClick = function(handler) action(handler) end }
+end
+
+-- Same-type handlers choose their items in getItemsToTransfer: a click moves
+-- exactly those.
+local function hasMatchingItems(handler)
+    return #handler:getItemsToTransfer() > 0
+end
+
+local function canDropItems(handler)
+    return #itemsToMove(handler.inventoryWindow.inventoryPane, true) > 0
+end
+
+-- Transfer all goes to the loot window's container; vanilla's own list is
+-- not reachable without running it, so this mirrors it (itemsToMove).
+local function canTransferItems(handler)
+    local pane = handler.inventoryWindow.inventoryPane
+    local destination = getPlayerLoot(handler.playerNum).inventoryPane.inventory
+    return #itemsToMove(pane, destination:getType() == "floor") > 0
+end
+
+-- Whether the loot window is on the proximity tab. Then "same type to the
+-- displayed container" can only reach the floor's own items (the tab's
+-- container is typed floor, so they are dropped), which "same type to nearby
+-- containers" already does and puts each item in the container that holds its type.
+local function isLootOnProximityTab(page)
+    local loot = getPlayerLoot(page.player)
+    return loot ~= nil and ProximityTab.isShown(loot)
 end
 
 -- The player's inventory moves things out to the loot window or drops them.
 -- Left to right; transfer all, the most used, is last, next to the sort button.
 local INVENTORY_SPECS = {
-    transferSpec(DropAll, "arrow-down-to-dot", "ContextMenu_MoveToFloor"),
+    transferSpec(DropAll, "arrow-down-to-dot", "ContextMenu_MoveToFloor", nil, { hasItems = canDropItems }),
     transferSpec(ISInventoryWindowControlHandler_TransferSameType, "layers",
-        "IGUI_invpage_TransferSameTypeOneContainer_tt"),
+        "IGUI_invpage_TransferSameTypeOneContainer_tt", nil,
+        { hasItems = hasMatchingItems, isRedundant = isLootOnProximityTab }),
     transferSpec(ISInventoryWindowControlHandler_TransferSameTypeMultiContainer, "boxes",
-        "IGUI_invpage_TransferSameTypeMultiContainer_tt"),
+        "IGUI_invpage_TransferSameTypeMultiContainer_tt", nil, { hasItems = hasMatchingItems }),
     transferSpec(ISInventoryWindowControlHandler_TransferAll, "arrow-up-from-line", "IGUI_invpage_Transfer_all",
-        transferAll),
+        transferAll, { hasItems = canTransferItems }),
 }
 
 -- The loot window takes things in, and moves a container's items to the
@@ -152,10 +194,12 @@ local INVENTORY_SPECS = {
 -- virtual container treated like the floor, say) by changing arrange().
 -- Left to right; take all is last, next to the sort button, as transfer all is.
 local LOOT_SPECS = {
-    transferSpec(ISLootWindowObjectControlHandler_TakeSameType, "layers", "IGUI_invpage_Loot_TakeSameType_tt"),
+    transferSpec(ISLootWindowObjectControlHandler_TakeSameType, "layers", "IGUI_invpage_Loot_TakeSameType_tt",
+        nil, { hasItems = hasMatchingItems }),
     transferSpec(ISLootWindowObjectControlHandler_MoveToFloor, "arrow-down-to-dot", "ContextMenu_MoveToFloor"),
     transferSpec(ISLootWindowObjectControlHandler_TakeAll, "arrow-down-to-line", "IGUI_invpage_Loot_all"),
-    transferSpec(ISLootWindowFloorControlHandler_TakeSameType, "layers", "IGUI_invpage_Loot_TakeSameType_tt"),
+    transferSpec(ISLootWindowFloorControlHandler_TakeSameType, "layers", "IGUI_invpage_Loot_TakeSameType_tt",
+        nil, { hasItems = hasMatchingItems }),
     transferSpec(ISLootWindowFloorControlHandler_TakeAll, "arrow-down-to-line", "IGUI_invpage_Loot_all"),
 }
 
@@ -173,7 +217,13 @@ local function shownHandlerClasses(controlsUI)
 end
 
 local function candidateSpecs(page)
-    if page.onCharacter then return INVENTORY_SPECS end
+    if page.onCharacter then
+        local specs = {}
+        for _, spec in ipairs(INVENTORY_SPECS) do
+            if not (spec.isRedundant and spec.isRedundant(page)) then table.insert(specs, spec) end
+        end
+        return specs
+    end
     local shown = shownHandlerClasses(page.controlsUI)
     local specs = {}
     for _, spec in ipairs(LOOT_SPECS) do
@@ -198,9 +248,9 @@ local function windowHandler(page, class, object, container)
     return handler
 end
 
--- The specs whose handler is visible now. Deciding that walks the
--- containers' items, so it is redone only when one of the two panes
--- refreshed or the container changed.
+-- The specs whose handler is visible now and whose click would move
+-- something. Deciding that walks the containers' items, so it is redone only
+-- when one of the two panes refreshed, or the container or the tab changed.
 local function visibleSpecs(page)
     local pane, controlsUI = page.inventoryPane, page.controlsUI
     local otherPage = page.onCharacter and getPlayerLoot(page.player) or getPlayerInventory(page.player)
@@ -209,7 +259,8 @@ local function visibleSpecs(page)
     local cached = page.pei_transferCache
     if cached and cached.container == container and cached.refresh == pane.refreshContainerCount
         and cached.otherRefresh == (otherPane and otherPane.refreshContainerCount)
-        and cached.loadToken == LOAD_TOKEN then
+        and cached.loadToken == LOAD_TOKEN and cached.proximity == isLootOnProximityTab(page)
+        and cached.equipped == EquippedTab.isListing(pane) then
         return cached.specs
     end
     local specs = {}
@@ -217,14 +268,16 @@ local function visibleSpecs(page)
     if container and otherPane and otherPane.inventory then
         local object = (not page.onCharacter) and controlsUI:getDisplayedObject() or nil
         for _, spec in ipairs(candidateSpecs(page)) do
-            if windowHandler(page, spec.class, object, container):shouldBeVisible() then
+            local handler = windowHandler(page, spec.class, object, container)
+            if handler:shouldBeVisible() and (not spec.hasItems or spec.hasItems(handler)) then
                 table.insert(specs, spec)
             end
         end
     end
     page.pei_transferCache = { container = container, refresh = pane.refreshContainerCount,
                                otherRefresh = otherPane and otherPane.refreshContainerCount,
-                               loadToken = LOAD_TOKEN, specs = specs }
+                               loadToken = LOAD_TOKEN, proximity = isLootOnProximityTab(page),
+                               equipped = EquippedTab.isListing(pane), specs = specs }
     return specs
 end
 

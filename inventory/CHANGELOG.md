@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1 - 2026-10-29
+- Show each transfer button only when a click would move an item
+- Hide "same type to the displayed container" on the Nearby tab, where "same type to nearby containers" already covers it
+- Stop the quick buttons from flickering when the cursor is over them
+- Fix taking all items from the Nearby tab
+
 ## 1.1.0 - 2026-10-28
 - New option "Show the Nearby tab" (Options > Mods > Container tabs): untick it to hide the Nearby tab.
 - The "better than what you wear" arrow now only appears on items that deserve a top indicator, and clothing is compared by protection alone, so warmth no longer hides it from a more protective piece.
