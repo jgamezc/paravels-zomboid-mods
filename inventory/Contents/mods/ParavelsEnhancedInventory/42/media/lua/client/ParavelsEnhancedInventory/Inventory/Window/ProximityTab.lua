@@ -107,10 +107,114 @@ local function fillNearbyContainer(page)
     end
 end
 
+local function rememberSelection(page)
+    page.pei_refreshSelection = nil
+    if not page.pei_proximityTabBuiltWith then return end
+    page.pei_refreshSelection = {
+        kind = OpenTab.chosen(page),
+        inventory = page.inventoryPane and page.inventoryPane.inventory,
+    }
+end
+
+local function restoreSelection(page)
+    local selection = page.pei_refreshSelection
+    page.pei_refreshSelection = nil
+
+    local pane = page.inventoryPane
+    local floor = ISInventoryPage.GetFloorContainer(page.player)
+    if selection and selection.kind == OpenTab.PROXIMITY then
+        OpenTab.choose(page, OpenTab.PROXIMITY)
+        pane.inventory = floor
+        page.forceSelectedContainer = nil
+        return
+    end
+
+    local inventory = selection and selection.inventory
+    local playerObj = getSpecificPlayer(page.player)
+    if inventory and listsContainer(page, inventory) and not isLocked(inventory, playerObj) then
+        OpenTab.choose(page, OpenTab.CONTAINER)
+        pane.inventory = inventory
+        return
+    end
+
+    if selection or not pane.inventory or not listsContainer(page, pane.inventory) then
+        OpenTab.choose(page, OpenTab.PROXIMITY)
+        pane.inventory = floor
+    end
+end
+
+local function nearbyHighlightObjects(page)
+    local objects = {}
+    local playerObj = getSpecificPlayer(page.player)
+    for _, button in ipairs(page.backpacks) do
+        local container = button.inventory
+        if not isProximityTab(page, button) and not isLocked(container, playerObj) then
+            local object = page:getContainerParent(container)
+            if object and not (instanceof(object, "IsoPlayer") and not instanceof(object, "IsoDeadBody")) then
+                objects[object] = true
+            end
+        end
+    end
+    return objects
+end
+
+local function clearNearbyHighlights(page, keep)
+    local previous = page.pei_nearbyHighlighted or {}
+    for object in pairs(previous) do
+        if not keep or not keep[object] then
+            object:setHighlighted(page.player, false)
+            object:setOutlineHighlight(page.player, false)
+            object:setOutlineHlAttached(page.player, false)
+            previous[object] = nil
+        end
+    end
+end
+
+local function hoveredTabButton(page)
+    for _, button in ipairs(page.backpacks) do
+        if button:getIsVisible() and button:isPointOver(getMouseX(), getMouseY()) then return button end
+    end
+end
+
+local function highlightNearbyObjects(page)
+    local isNearbyActive = not page.isCollapsed and ProximityTab.isShown(page)
+    local objects = isNearbyActive and nearbyHighlightObjects(page) or {}
+    local hoveredButton = isNearbyActive and hoveredTabButton(page) or nil
+    if hoveredButton then
+        local hoveredObject = page:getContainerParent(hoveredButton.inventory)
+        objects = hoveredObject and { [hoveredObject] = true } or {}
+    end
+    clearNearbyHighlights(page, objects)
+    local color = getCore():getObjectHighlitedColor()
+    local outlineColor = hoveredButton and getCore():getWorldItemHighlightColor() or color
+    for object in pairs(objects) do
+        object:setHighlighted(page.player, true, false)
+        if getCore():getOptionDoContainerOutline() then
+            object:setOutlineHighlight(page.player, true)
+            object:setOutlineHlAttached(page.player, true)
+            object:setOutlineHighlightCol(page.player, outlineColor:getR(), outlineColor:getG(), outlineColor:getB(), 1)
+        end
+        object:setHighlightColor(page.player, color)
+    end
+    page.pei_nearbyHighlighted = objects
+end
+
+PUI.override(ISInventoryPage, "updateContainerHighlight", function(vanilla, page, ...)
+    local result = vanilla(page, ...)
+    if not page.onCharacter then highlightNearbyObjects(page) end
+    return result
+end)
+
+PUI.override(ISInventoryPage, "close", function(vanilla, page, ...)
+    local result = vanilla(page, ...)
+    if not page.onCharacter then clearNearbyHighlights(page) end
+    return result
+end)
+
 -- Added first, so it is the leftmost tab. Vanilla reuses its buttons from a
 -- pool, in order, so the tab gets the same button again on every refresh.
--- Inside a vehicle the loot window lists the vehicle's parts and no floor,
--- and there is no tab.
+-- Inside a vehicle, this adds a floor button of its own alongside the
+-- vehicle's part buttons; the nearby list can then gather those containers.
 PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab", function(page, state)
     if page.onCharacter then return end
     if state == "begin" then
@@ -118,8 +222,9 @@ PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab",
         -- What the tabs of this window are made with: followOption compares it
         -- with the option to know the window is out of date.
         page.pei_proximityTabBuiltWith = Options.get("showProximityTab")
+        rememberSelection(page)
         local playerObj = getSpecificPlayer(page.player)
-        if not playerObj or playerObj:getVehicle() then return end
+        if not playerObj then return end
         if not page.pei_proximityTabBuiltWith then
             -- Never left chosen with no tab to show: the floor's own tab, or
             -- the container the game picks, takes over.
@@ -134,19 +239,9 @@ PUI.listen(Events.OnRefreshInventoryWindowContainers, "PEI.ProximityTab.addTab",
     end
     if state ~= "buttonsAdded" or not OpenTab.buttonOf(page, OpenTab.PROXIMITY) then return end
     fillNearbyContainer(page)
-    -- Vanilla next keeps the pane on the container it lists, if still there.
-    -- While the tab is open, that is the floor, even when the player turns
-    -- to face another container or a transfer asks for the one it used.
-    local pane = page.inventoryPane
-    local floor = ISInventoryPage.GetFloorContainer(page.player)
-    if OpenTab.chosen(page) == OpenTab.PROXIMITY then
-        pane.inventory = floor
-        page.forceSelectedContainer = nil
-    elseif not pane.inventory or not listsContainer(page, pane.inventory) then
-        -- The tab picked instead is gone: back to this one.
-        OpenTab.choose(page, OpenTab.PROXIMITY)
-        pane.inventory = floor
-    end
+    -- Vanilla temporarily selects the first container it finds while the
+    -- player moves. Restore the user's choice before vanilla finalizes it.
+    restoreSelection(page)
 end)
 
 -- The tabs are only made when the game asks, so a change of the option

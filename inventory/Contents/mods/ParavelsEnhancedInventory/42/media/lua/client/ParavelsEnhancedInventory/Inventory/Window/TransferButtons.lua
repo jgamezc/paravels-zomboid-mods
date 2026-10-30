@@ -78,6 +78,15 @@ local function shownItems(pane)
     return items
 end
 
+local function nearbyItemsToDrop(pane)
+    local floor = ISInventoryPage.GetFloorContainer(pane.player)
+    local items = {}
+    for _, item in ipairs(shownItems(pane)) do
+        if item:getContainer() ~= floor then table.insert(items, item) end
+    end
+    return items
+end
+
 -- What transfer all moves out of the pane's container; when it goes to the
 -- floor, only what can be put there. The buttons offer exactly this, and
 -- drop all does it.
@@ -100,6 +109,12 @@ end
 function DropAll:perform()
     if isGamePaused() then return end
     local pane = self.inventoryWindow.inventoryPane
+    if not self.inventoryWindow.onCharacter and ProximityTab.isShown(self.inventoryWindow) then
+        local items = nearbyItemsToDrop(pane)
+        if #items > 0 then ISInventoryPaneContextMenu.onMoveItemsTo(items, ISInventoryPage.GetFloorContainer(self.playerNum), self.playerNum) end
+        pane.selected = {}
+        return
+    end
     if not pane.inventory or not luautils.walkToContainer(pane.inventory, self.playerNum) then return end
     pane:transferItemsByWeight(itemsToMove(pane, true), ISInventoryPage.GetFloorContainer(self.playerNum))
     pane.selected = {}
@@ -206,6 +221,10 @@ local LOOT_SPECS = {
     transferSpec(ISLootWindowFloorControlHandler_TakeAll, "arrow-down-to-line", "IGUI_invpage_Loot_all"),
 }
 
+local function canDropNearbyItems(handler)
+    return #nearbyItemsToDrop(handler.inventoryWindow.inventoryPane) > 0
+end
+
 -- The handler classes whose control the last arrange() put in the controls.
 -- A handler keeps its control after the container changes, but the list of
 -- controls is rebuilt by every arrange().
@@ -231,6 +250,10 @@ local function candidateSpecs(page)
     local specs = {}
     for _, spec in ipairs(LOOT_SPECS) do
         if shown[spec.class] then table.insert(specs, spec) end
+    end
+    if ProximityTab.isShown(page) then
+        table.insert(specs, 1, transferSpec(DropAll, "arrow-down-to-dot", "ContextMenu_MoveToFloor", nil,
+            { hasItems = canDropNearbyItems }))
     end
     return specs
 end
